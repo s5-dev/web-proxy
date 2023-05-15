@@ -4,7 +4,7 @@ The S5 Web Proxy can securely stream files of any size from the S5 network, dire
 
 It works by registering and running a service worker which intercepts specific requests, looks up download urls for them and then verifies their integrity with Rust BLAKE3/bao running in WASM.
 
-After adding the service worker to your web app, streaming files from the S5 network is as easy as using the URL `/s5/blob/YOUR_CID_HERE??mediaType=image%2Fpng` in `img` tags, for your video player or just fetching it directly! Encrypted files are supported too.
+After adding the service worker to your web app, streaming files from the S5 network is as easy as using the URL `/s5/blob/YOUR_CID_HERE?mediaType=image%2Fpng` in `img` tags, for your video player or just fetching it directly! Encrypted files are supported too.
 
 ## Example apps using this proxy
 
