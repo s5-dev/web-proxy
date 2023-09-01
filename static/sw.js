@@ -381,7 +381,14 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
         }
       }
 
+      let isFirstLoop = true;
+
       while (start < end) {
+        if (!isFirstLoop) {
+          chunk = safeDivision(start, chunkSize);
+        }
+
+        isFirstLoop = false;
         /* if (limit) {
           servedChunkCount++;
           if (servedChunkCount > (64)) {
@@ -394,13 +401,18 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
         } */
 
         let chunkCacheKey = '0/' + hash_b64 + '/' + chunk.toString();
-        
+
         let chunkRes = await s5Cache.match(chunkCacheKey);
 
         if (chunkRes !== undefined) {
           console.debug('serve', 'cache', chunk);
 
           const bytes = new Uint8Array(await chunkRes.arrayBuffer());
+
+          if (bytes.length == 0) {
+            s5Cache.delete(chunkCacheKey);
+            throw 'Invalid chunk cache';
+          }
 
           if (offset === 0) {
             if ((start + bytes.length) > end) {
@@ -415,7 +427,11 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
               controller.enqueue(bytes.slice(offset));
             }
           }
+          // console.debug('serve', 'cache done', start, bytes.length, offset);
           start += bytes.length - offset;
+
+
+          // console.debug('serve', 'cache done');
 
         } else {
           const chunkLockKey = '0/' + hash_b64 + '/' + chunk.toString();
@@ -535,7 +551,7 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
                     } else {
                       rangeHeader = 'bytes=' + encStartByte + '-' + (encStartByte + length - 1);
                     }
-                  }              
+                  }
                   console.debug('fetch', 'range', rangeHeader, url);
 
                   const res = await fetch(url, {
@@ -594,7 +610,7 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
 
                 if (isEncrypted) {
                   let nonce = new Uint8Array(numberToArrayBuffer(chunk));
-
+                  
                   chunkBytes = decrypt_xchacha20poly1305(
                     encryptionMetadata.key,
                     nonce,
@@ -602,6 +618,9 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
                   );
                   if (isLastChunk && encryptionMetadata.padding > 0) {
                     chunkBytes = chunkBytes.slice(0, chunkBytes.length - encryptionMetadata.padding)
+                  }
+                  if (chunkBytes.length === 0) {
+                    throw 'Chunk is empty!';
                   }
                 } else {
                   let integrity_res = verify_integrity(
@@ -652,7 +671,7 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
                 }
                 start += chunkBytes.length - offset;
 
-                delete downloadingChunkLock[chunkCacheKey];
+                delete downloadingChunkLock[chunkLockKey];
                 break;
               } catch (e) {
                 console.error(e);
@@ -675,7 +694,6 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
           }
         }
         offset = 0;
-        chunk++;
       }
       controller.close();
     }
@@ -793,37 +811,37 @@ async function respond(url, req) {
   }
   return;
 
-/*   let directoryFile = availableDirectoryFiles[url.pathname];
-
-  const resOpt = {
-    headers: {
-      'Content-Type': directoryFile.mimeType || 'text/plain',
-    },
-  }
-
-
-  var start = 0;
-  var totalSize = directoryFile.file.size;
-
-  const range = req.headers.get('range')
-
-  if (range) {
-    const m = range.match(/bytes=(\d+)-(\d*)/)
-    if (m) {
-      const size = directoryFile.file.size
-      const begin = +m[1]
-      const end = +m[2] || size
-
-      start = begin;
-      totalSize = end;
-
-      resOpt.status = 206
-      resOpt.headers['content-range'] = `bytes ${begin}-${end - 1}/${size}`
+  /*   let directoryFile = availableDirectoryFiles[url.pathname];
+  
+    const resOpt = {
+      headers: {
+        'Content-Type': directoryFile.mimeType || 'text/plain',
+      },
     }
-  }
-
-  resOpt.headers['content-length'] = directoryFile.file.size - start - (directoryFile.file.size - totalSize)
-  return new Response(openReadOld(directoryFile, start, totalSize), resOpt) */
+  
+  
+    var start = 0;
+    var totalSize = directoryFile.file.size;
+  
+    const range = req.headers.get('range')
+  
+    if (range) {
+      const m = range.match(/bytes=(\d+)-(\d*)/)
+      if (m) {
+        const size = directoryFile.file.size
+        const begin = +m[1]
+        const end = +m[2] || size
+  
+        start = begin;
+        totalSize = end;
+  
+        resOpt.status = 206
+        resOpt.headers['content-range'] = `bytes ${begin}-${end - 1}/${size}`
+      }
+    }
+  
+    resOpt.headers['content-length'] = directoryFile.file.size - start - (directoryFile.file.size - totalSize)
+    return new Response(openReadOld(directoryFile, start, totalSize), resOpt) */
 }
 
 onfetch = (e) => {
@@ -850,38 +868,38 @@ onfetch = (e) => {
 
 // TODO Migrate to S5 encryption
 onmessage = (e) => {
-/*   console.log('onmessage', e);
-
-  const path = e.data['path'];
-  const directoryFile = e.data['file'];
-
-  if (e.data['ciphertext'] !== undefined) {
-    console.log(e.data);
-
-    const secretKey =
-      _base64ToUint8Array(e.data['key'].replace(/-/g, '+')
-        .replace(/_/g, '/'));
-
-    const ciphertext =
-      _base64ToUint8Array(e.data['ciphertext'].replace(/-/g, '+')
-        .replace(/_/g, '/'));
-
-
-    let bytes = sodium.crypto_secretbox_open_easy(ciphertext, new Uint8Array(24), secretKey);
-
-    console.log(bytes);
-    availableDirectoryFiles = JSON.parse(new TextDecoder().decode(bytes));
-    availableDirectoryFiles['/'] = availableDirectoryFiles['/index.html'];
-    availableDirectoryFiles[''] = availableDirectoryFiles['/index.html'];
-
-    e.source.postMessage({ 'success': true })
-
-  } else {
-    if (availableDirectoryFiles[path] === undefined) {
-      availableDirectoryFiles[path] = directoryFile;
+  /*   console.log('onmessage', e);
+  
+    const path = e.data['path'];
+    const directoryFile = e.data['file'];
+  
+    if (e.data['ciphertext'] !== undefined) {
+      console.log(e.data);
+  
+      const secretKey =
+        _base64ToUint8Array(e.data['key'].replace(/-/g, '+')
+          .replace(/_/g, '/'));
+  
+      const ciphertext =
+        _base64ToUint8Array(e.data['ciphertext'].replace(/-/g, '+')
+          .replace(/_/g, '/'));
+  
+  
+      let bytes = sodium.crypto_secretbox_open_easy(ciphertext, new Uint8Array(24), secretKey);
+  
+      console.log(bytes);
+      availableDirectoryFiles = JSON.parse(new TextDecoder().decode(bytes));
+      availableDirectoryFiles['/'] = availableDirectoryFiles['/index.html'];
+      availableDirectoryFiles[''] = availableDirectoryFiles['/index.html'];
+  
       e.source.postMessage({ 'success': true })
-    }
-  } */
+  
+    } else {
+      if (availableDirectoryFiles[path] === undefined) {
+        availableDirectoryFiles[path] = directoryFile;
+        e.source.postMessage({ 'success': true })
+      }
+    } */
 }
 
 onactivate = () => {
