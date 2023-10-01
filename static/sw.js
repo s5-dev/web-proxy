@@ -1,6 +1,7 @@
 'use strict'
 
-// ! S5 web proxy service worker (version 11)
+// ! S5 web proxy service worker (version 12)
+const initInfo = 'S5 web proxy service worker (version 12)';
 
 // ! WASM bindings (generated) START
 let wasm;
@@ -284,6 +285,10 @@ function safeDivision(start, chunkSize) {
   return Number((startN - (startN % chunkSizeN)) / chunkSizeN);
 }
 
+function isLocked(key) {
+  return (downloadingChunkLock[key] ?? 0) > (Date.now() - 1000);
+}
+
 function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
   console.debug('openRead', cid, start, end, totalSize, limit, encryptionMetadata)
   // ! end is exclusive
@@ -435,11 +440,10 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
 
         } else {
           const chunkLockKey = '0/' + hash_b64 + '/' + chunk.toString();
-          if (downloadingChunkLock[chunkLockKey] === true && !lockedChunks.includes(chunkLockKey)) {
+          if (isLocked(chunkLockKey) && !lockedChunks.includes(chunkLockKey)) {
             console.debug('[chunk] wait for ' + chunk);
             // sub?.cancel();
-            while (downloadingChunkLock[chunkLockKey] === true) {
-              // TODO Risk for infinite loop, add timeout
+            while (isLocked(chunkLockKey)) {
               await new Promise(r => setTimeout(r, 10));
             }
 
@@ -468,7 +472,7 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
 
             function lockChunk(index) {
               const chunkLockKey = '0/' + hash_b64 + '/' + index.toString();
-              downloadingChunkLock[chunkLockKey] = true;
+              downloadingChunkLock[chunkLockKey] = Date.now();
               lockedChunks.push(chunkLockKey);
             }
 
@@ -490,13 +494,12 @@ function openRead(cid, start, end, totalSize, limit, encryptionMetadata) {
 
             if (!isEncrypted && bao_outboard_bytes_cache[baoOutboardBytesUrl] === undefined) {
               const baoLockKey = '0/' + hash_b64 + '/bao';
-              if (downloadingChunkLock[baoLockKey] === true) {
-                while (downloadingChunkLock[baoLockKey] === true) {
-                  // TODO Risk for infinite loop, add timeout
+              if (isLocked(baoLockKey)) {
+                while (isLocked(baoLockKey)) {
                   await new Promise(r => setTimeout(r, 10));
                 }
               } else {
-                downloadingChunkLock[baoLockKey] = true;
+                downloadingChunkLock[baoLockKey] = Date.now();
                 lockedChunks.push(baoLockKey);
 
                 console.debug('fetch', 'bao', baoOutboardBytesUrl);
@@ -731,6 +734,7 @@ async function respond(url, req) {
   if (url.pathname.startsWith('/s5/blob/')) {
 
     if (wasm === undefined) {
+      console.log(initInfo);
       await init();
     }
 
